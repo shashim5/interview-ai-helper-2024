@@ -5,13 +5,20 @@
     "serve": "vite preview"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@types/highlight.js": "^9.12.4",
+    "highlight.js": "^11.11.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "@vitejs/plugin-react": "^4.3.3",
-    "vite": "^4.3.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "vite": "^4.3.0",
-    "@vitejs/plugin-react": "^4.3.3"
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.16",
+    "vite": "^4.3.0"
   }
 }
