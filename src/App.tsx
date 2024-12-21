@@ -4,8 +4,12 @@ import hljs from 'highlight.js';
 import 'highlight.js/styles/github-dark.css';
 
 interface AISession {
+  id: string;
   question: string;
   response: string;
+  isListening: boolean;
+  transcript: string;
+  lastSimulationStep: number;
 }
 
 const API_KEY = 'AIzaSyDfbugjoSRGIb40hn4JoxT8kLL39tIzCzM';
@@ -160,119 +164,28 @@ const styles = {
 } as const;
 
 const App: React.FC = () => {
-  const [transcript, setTranscript] = useState('');
-  const [aiSessions, setAiSessions] = useState<AISession[]>([]);
-  const [historySessions, setHistorySessions] = useState<AISession[]>([]);
-  const [isListening, setIsListening] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [aiSessions, setAiSessions] = useState<AISession[]>(() => {
+    const savedSessions = localStorage.getItem('aiSessions');
+    return savedSessions ? JSON.parse(savedSessions) : [];
+  });
+  const [historySessions, setHistorySessions] = useState<AISession[]>(() => {
+    const savedHistory = localStorage.getItem('historySessions');
+    return savedHistory ? JSON.parse(savedHistory) : [];
+  });
   const [isHovered, setIsHovered] = useState(false);
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [activeSessionIndex, setActiveSessionIndex] = useState<number | null>(null);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
 
   const recognitionRef = useRef<any>(null);
   const lastTranscriptRef = useRef('');
   const processingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const generateAIResponse = async (text: string): Promise<string> => {
-    try {
-      const result = await model.generateContent(text);
-      const response = result.response;
-      return response.text();
-    } catch (error) {
-      console.error('Error generating AI response:', error);
-      return 'Error generating response. Please try again.';
-    }
-  };
-
-  const startListening = useCallback(() => {
-    if (aiSessions.length > 0) {
-      setHistorySessions(prev => [...prev, ...aiSessions]);
-      setAiSessions([]);
-    }
-    if ('webkitSpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-
-      recognition.onstart = () => {
-        setIsListening(true);
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .map((result: any) => result[0])
-          .map((result: any) => result.transcript)
-          .join('');
-
-        setTranscript(transcript);
-
-        if (processingTimeoutRef.current) {
-          clearTimeout(processingTimeoutRef.current);
-        }
-
-        processingTimeoutRef.current = setTimeout(async () => {
-          lastTranscriptRef.current = transcript;
-          const response = await generateAIResponse(transcript);
-          setAiSessions(prev => [...prev, { question: transcript, response }]);
-        }, 3000);
-      };
-
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognition.start();
-      recognitionRef.current = recognition;
-    } else {
-      console.error('Speech recognition not supported');
-    }
-  }, []);
-
-  const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
-      setIsListening(false);
-    }
-  }, []);
-
-  const toggleListening = useCallback(() => {
-    if (isListening) {
-      stopListening();
-    } else {
-      startListening();
-    }
-  }, [isListening, startListening, stopListening]);
-
-  const deleteSession = (index: number, isHistory: boolean = false) => {
-    if (isHistory) {
-      setHistorySessions(prev => prev.filter((_, i) => i !== index));
-    } else {
-      setAiSessions(prev => prev.filter((_, i) => i !== index));
-    }
-  };
-
-  const moveToHistory = (index: number) => {
-    setAiSessions(prev => {
-      const sessionToMove = prev[index];
-      setHistorySessions(prevHistory => [...prevHistory, sessionToMove]);
-      return prev.filter((_, i) => i !== index);
-    });
-  };
+  const simulationIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        stopListening();
-      }
-    };
-  }, [stopListening]);
+    console.log('Sessions updated:', aiSessions);
+  }, [aiSessions]);
 
   const handleMouseEnter = () => {
     setIsHovered(true);
@@ -282,47 +195,134 @@ const App: React.FC = () => {
     setIsHovered(false);
   };
 
-  const addNewSession = async () => {
-    if (transcript && transcript !== lastTranscriptRef.current) {
-      setIsLoading(true);
-      const response = await generateAIResponse(transcript);
-      setAiSessions(prev => [...prev, {
-        question: transcript,
-        response: response
-      }]);
-      setIsLoading(false);
-      lastTranscriptRef.current = transcript;
+  const addNewSession = () => {
+    console.log('Adding new session...');
+    const newSession: AISession = {
+      id: Math.random().toString(36).substr(2, 9),
+      question: '',
+      response: '🎙️ Click "Start Listening" to begin recording your interview questions.',
+      isListening: false,
+      transcript: '',
+      lastSimulationStep: 0
+    };
+    setAiSessions(prev => {
+      const updatedSessions = [...prev, newSession];
+      localStorage.setItem('aiSessions', JSON.stringify(updatedSessions));
+      return updatedSessions;
+    });
+    setActiveTab('current');
+  };
+
+  const deleteSession = (index: number, isHistory: boolean = false) => {
+    if (isHistory) {
+      setHistorySessions(prev => {
+        const updatedSessions = prev.filter((_, i) => i !== index);
+        localStorage.setItem('historySessions', JSON.stringify(updatedSessions));
+        return updatedSessions;
+      });
     } else {
-      setAiSessions(prev => [...prev, {
-        question: '',
-        response: 'New session started. Ask a question to begin.'
-      }]);
+      setAiSessions(prev => {
+        const updatedSessions = prev.filter((_, i) => i !== index);
+        localStorage.setItem('aiSessions', JSON.stringify(updatedSessions));
+        return updatedSessions;
+      });
+    }
+  };
+
+  const moveToHistory = (index: number) => {
+    setAiSessions(prev => {
+      const sessionToMove = prev[index];
+      setHistorySessions(prevHistory => {
+        const updatedHistory = [...prevHistory, sessionToMove];
+        localStorage.setItem('historySessions', JSON.stringify(updatedHistory));
+        return updatedHistory;
+      });
+      const updatedSessions = prev.filter((_, i) => i !== index);
+      localStorage.setItem('aiSessions', JSON.stringify(updatedSessions));
+      return updatedSessions;
+    });
+  };
+
+  const stopSession = (sessionId: string) => {
+    setAiSessions(prev => {
+      const session = prev.find(s => s.id === sessionId);
+      if (!session) return prev;
+
+      if (simulationIntervalRef.current) {
+        window.clearInterval(simulationIntervalRef.current);
+        simulationIntervalRef.current = null;
+      }
+
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+
+      const updatedSession = {
+        ...session,
+        isListening: false,
+        response: '✅ Session completed and saved to history'
+      };
+
+      setHistorySessions(prevHistory => {
+        const updatedHistory = [...prevHistory, updatedSession];
+        localStorage.setItem('historySessions', JSON.stringify(updatedHistory));
+        return updatedHistory;
+      });
+
+      const updatedSessions = prev.filter(s => s.id !== sessionId);
+      localStorage.setItem('aiSessions', JSON.stringify(updatedSessions));
+      setCurrentSessionId(null);
+      return updatedSessions;
+    });
+  };
+
+  const toggleListening = (sessionId: string) => {
+    const session = aiSessions.find(s => s.id === sessionId);
+    if (session?.isListening) {
+      setIsRecording(false);
+      setCurrentSessionId(null);
+      setAiSessions(prev => {
+        const updatedSessions = prev.map(s =>
+          s.id === sessionId ? {
+            ...s,
+            isListening: false,
+            response: '⏸️ Session paused - Click Start Listening to resume'
+          } : s
+        );
+        localStorage.setItem('aiSessions', JSON.stringify(updatedSessions));
+        return updatedSessions;
+      });
+    } else {
+      setIsRecording(true);
+      setCurrentSessionId(sessionId);
     }
   };
 
   const formatCodeBlock = (text: string): React.ReactNode => {
-    if (text.includes('```')) {
-      const codeContent = text.split('```')[1].trim();
-      try {
-        const highlighted = hljs.highlightAuto(codeContent);
-        return (
-          <pre className="code-block">
-            <code
-              dangerouslySetInnerHTML={{ __html: highlighted.value }}
-              style={{
-                display: 'block',
-                padding: '1rem',
-                lineHeight: '1.5',
-                tabSize: 4
-              }}
-            />
-          </pre>
-        );
-      } catch (error) {
-        return <pre className="code-block"><code>{codeContent}</code></pre>;
-      }
+    if (!text.includes('```')) return text;
+
+    const parts = text.split('```');
+    if (parts.length < 2) return text;
+
+    const codeContent = parts[1].trim();
+    try {
+      const highlighted = hljs.highlightAuto(codeContent);
+      return (
+        <pre className="code-block">
+          <code
+            dangerouslySetInnerHTML={{ __html: highlighted.value }}
+            style={{
+              display: 'block',
+              padding: '1rem',
+              lineHeight: '1.5',
+              tabSize: 4
+            }}
+          />
+        </pre>
+      );
+    } catch (error) {
+      return <pre className="code-block"><code>{codeContent}</code></pre>;
     }
-    return text;
   };
 
   return (
@@ -347,8 +347,21 @@ const App: React.FC = () => {
       <div style={{
         display: 'flex',
         gap: '20px',
-        marginBottom: '20px'
+        marginBottom: '20px',
+        alignItems: 'center'
       } as React.CSSProperties}>
+        {currentSessionId && (
+          <button
+            onClick={() => stopSession(currentSessionId)}
+            style={{
+              ...styles.button,
+              backgroundColor: '#dc3545',
+              marginRight: '20px'
+            } as React.CSSProperties}
+          >
+            Stop Session
+          </button>
+        )}
         <button
           onClick={() => setActiveTab('current')}
           style={{
@@ -367,157 +380,113 @@ const App: React.FC = () => {
         >
           History
         </button>
-        <button
-          onClick={toggleListening}
-          style={styles.button as React.CSSProperties}
-        >
-          {isListening ? 'Stop Listening' : 'Start Listening'}
-        </button>
-      </div>
-      <div style={styles.transcriptArea as React.CSSProperties}>
-        {transcript || 'No speech detected yet...'}
       </div>
 
       <div
         className="horizontal-scroll-container scroll-fade-edges"
-        style={styles.horizontalScroll as React.CSSProperties}
+        style={{
+          ...styles.horizontalScroll,
+          position: 'relative'
+        } as React.CSSProperties}
       >
-        {activeTab === 'current' ? (
-          <>
+        {activeTab === 'current' && (
+          <div style={{ display: 'flex', gap: '20px', padding: '20px', overflowX: 'auto' }}>
             {aiSessions.map((session, index) => (
               <div
-                key={index}
-                style={styles.aiCard as React.CSSProperties}
+                key={session.id}
+                style={{
+                  ...styles.aiCard,
+                  border: session.id === currentSessionId ? '2px solid #4CAF50' : undefined,
+                  boxShadow: session.id === currentSessionId ? '0 0 10px rgba(76, 175, 80, 0.3)' : undefined,
+                  opacity: session.isListening ? 1 : 0.8
+                } as React.CSSProperties}
               >
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', padding: '10px' }}>
+                  <button
+                    style={{
+                      ...styles.cardButton,
+                      ...styles.deleteButton
+                    } as React.CSSProperties}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteSession(index);
+                    }}
+                    title="Delete session"
+                  >
+                    ✕
+                  </button>
+                  <button
+                    style={{
+                      ...styles.cardButton,
+                      ...styles.historyButton
+                    } as React.CSSProperties}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      moveToHistory(index);
+                    }}
+                    title="Move to history"
+                  >
+                    📚
+                  </button>
+                </div>
                 <button
+                  onClick={() => toggleListening(session.id)}
                   style={{
-                    position: 'absolute',
-                    top: '10px',
-                    right: '10px',
-                    width: '40px',
-                    height: '40px',
-                    background: '#ff4444',
-                    border: 'none',
-                    borderRadius: '50%',
-                    color: 'white',
-                    fontSize: '24px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    zIndex: 9999,
-                    fontWeight: 'bold'
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteSession(index);
-                  }}
-                  title="Delete session"
+                    ...styles.button,
+                    margin: '10px',
+                    backgroundColor: session.isListening ? '#4CAF50' : undefined
+                  } as React.CSSProperties}
                 >
-                  ✕
+                  {session.isListening ? 'Stop Listening' : 'Start Listening'}
                 </button>
-                <button
-                  style={{
-                    position: 'absolute',
-                    top: '10px',
-                    right: '60px',
-                    width: '40px',
-                    height: '40px',
-                    background: '#4444ff',
-                    border: 'none',
-                    borderRadius: '50%',
-                    color: 'white',
-                    fontSize: '24px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    zIndex: 9999,
-                    fontWeight: 'bold'
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    moveToHistory(index);
-                  }}
-                  title="Move to history"
-                >
-                  📚
-                </button>
-                <div onClick={() => setActiveSessionIndex(activeSessionIndex === index ? null : index)}>
-                  <h3>Session {index + 1}</h3>
-                  {activeSessionIndex === index ? (
-                    <>
-                      <h4>Question:</h4>
-                      <p>{session.question}</p>
-                      <h4>Response:</h4>
-                      <div>{formatCodeBlock(session.response)}</div>
-                    </>
-                  ) : (
-                    <p>Click to view content</p>
-                  )}
+                <div style={{ padding: '10px' }}>
+                  <p style={{ marginBottom: '10px', fontWeight: 'bold' }}>Question:</p>
+                  <p style={{ marginBottom: '20px' }}>{session.question || 'Waiting for question...'}</p>
+                  <p style={{ marginBottom: '10px', fontWeight: 'bold' }}>Response:</p>
+                  <div>{formatCodeBlock(session.response)}</div>
                 </div>
               </div>
             ))}
-            {isLoading && (
-              <div style={styles.aiCard as React.CSSProperties}>
-                <h3>New Session</h3>
-                <p>Generating response...</p>
-              </div>
-            )}
-          </>
-        ) : (
-          historySessions.map((session, index) => (
-            <div
-              key={index}
-              style={styles.aiCard as React.CSSProperties}
-            >
-              <button
+          </div>
+        )}
+        {activeTab === 'history' && (
+          <div style={{ display: 'flex', gap: '20px', padding: '20px', overflowX: 'auto' }}>
+            {historySessions.map((session, index) => (
+              <div
+                key={session.id}
                 style={{
-                  position: 'absolute',
-                  top: '10px',
-                  right: '10px',
-                  width: '40px',
-                  height: '40px',
-                  background: '#ff4444',
-                  border: 'none',
-                  borderRadius: '50%',
-                  color: 'white',
-                  fontSize: '24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  zIndex: 99999,
-                  fontWeight: 'bold',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                  transform: 'translateZ(0)'
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setHistorySessions(prev => prev.filter((_, i) => i !== index));
-                }}
-                title="Delete session"
+                  ...styles.aiCard,
+                  opacity: 0.8
+                } as React.CSSProperties}
               >
-                ✕
-              </button>
-              <div onClick={() => setActiveSessionIndex(activeSessionIndex === index ? null : index)}>
-                <h3>History Session {index + 1}</h3>
-                {activeSessionIndex === index ? (
-                  <>
-                    <h4>Question:</h4>
-                    <p>{session.question}</p>
-                    <h4>Response:</h4>
-                    <div>{formatCodeBlock(session.response)}</div>
-                  </>
-                ) : (
-                  <p>Click to view content</p>
-                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px' }}>
+                  <button
+                    style={{
+                      ...styles.cardButton,
+                      ...styles.deleteButton
+                    } as React.CSSProperties}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteSession(index, true);
+                    }}
+                    title="Delete from history"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div style={{ padding: '10px' }}>
+                  <p style={{ marginBottom: '10px', fontWeight: 'bold' }}>Question:</p>
+                  <p style={{ marginBottom: '20px' }}>{session.question}</p>
+                  <p style={{ marginBottom: '10px', fontWeight: 'bold' }}>Response:</p>
+                  <div>{formatCodeBlock(session.response)}</div>
+                </div>
               </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </div>
     </div>
   );
 };
+
 export default App;
